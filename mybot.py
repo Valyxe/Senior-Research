@@ -45,7 +45,7 @@ PORT = 8446
 USERNAME = 'Acurion'
 PASSWORD = 'ValyxeBotShipU2012'
 TEAM_DIR = "Teams/"
-TEAMS = ["Team1.sbt"]
+TEAMS = ["Team3.sbt"]
 # An awesome, super human robot capable of beating any challenger
 class PyFred(MessageHandler):
     
@@ -185,10 +185,10 @@ class Battle:
         
     def handle_victory(self, winner):
         if winner:
-            self.send_message("I am a polymath")
+            self.send_message("Thanks for the match.")
             verb = "Won"
         else:
-            self.send_message("You are a polymath")
+            self.send_message("Well played.")
             verb = "Lost"
         self.handler.leave_channel(self.fid)
         print verb, "a battle against", self.opponent
@@ -206,7 +206,7 @@ class Battle:
  
  
     ############################################################################
-    #    TYPES and EFFECTIVENESS                                               #
+    #    types and effectiveness                                               #
     #    by Allan Simmons                                                      #
     #    Last modified: 9/3/12                                                 #
     #                                                                          #
@@ -236,51 +236,35 @@ class Battle:
                      [ 1, 1, 1, 1, 1, 1, 0.5, 1, 1, 1, 2, 1, 1, 2, 1, 0.5, 0.5],
                      [ 1, 0.5, 0.5, 0.5, 1, 2, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 0.5]]
 
-
-    ############################################################################
-    #    find_best_damage                                                      #
-    #    by Allan Simmons                                                      #
-    #    Last modified: 9/11/12                                                #
-    #                                                                          #
-    #        This function determines the damage of a move. The move is        #
-    #    multiplied by 1.5 if it is the same type as it's user. The move is    #
-    #    also multiplied by a factor based on the enemy's type.                #
-    ############################################################################
-    def find_move_damage(self, move, me_types, them_types):
-        enumerate(move)
-        damage = move["power"]
-        for type1 in me_types:
-            if move["type"] == type1:
-                damage *= 1.5
-        for type2 in them_types:
-            damage*= self.effectiveness[self.TYPES[move["type"]]][self.TYPES[type2]]
-            
-        return damage
-    
     ############################################################################
     #    find_best_move                                                        #
     #    by Allan Simmons                                                      #
-    #    Last modified: 9/11/12                                                #
+    #    Last modified: 9/14/12                                                #
     #                                                                          #
     #        This function determines the best move of all the moves           #
     #    the current Pokemon has.                                              #
     ############################################################################
-    def find_best_move(self, me, them_types):
+    def find_best_move(self, me, them_types, legal_moves):
         best_damage = 0
         best_id = 0
-        for move in me.moves:
+        
+        #Handle moves with multiple hits, Technician
+        for i, move in enumerate(me.moves):
             move = self.handler.client.move_list[move[0]]
-            enumerate(move)
-            damage = move["power"]
-            for type1 in me.pokemonspecies["types"]:
-                if move["type"] == type1:
-                    damage *= 1.5
-            for type2 in them_types:
-                damage *= self.effectiveness[self.types[move["type"]]][self.types[type2]]
-                
-            if damage > best_damage:
-                best_damage = damage
-                best_id = move["id"]         
+            #Only consider available moves
+            if legal_moves[i] != 0:
+                damage = move["power"]
+                #Power is multiplied by 1.5 for STAB (Same Type Attack Bonus)
+                for type1 in me.pokemonspecies["types"]:
+                    if move["type"] == type1:
+                        damage *= 1.5
+                #Power is multiplied by multiple based on type of the move and type(s) of the opponent
+                for type2 in them_types:
+                    damage *= self.effectiveness[self.types[move["type"]]][self.types[type2]]
+
+                if damage > best_damage:
+                    best_damage = damage
+                    best_id = move["id"]         
         return best_id       
 
     ############################################################################
@@ -293,18 +277,22 @@ class Battle:
     ############################################################################
     def find_best_switch(self, switches, them_types):
         best_mult = 100
-        switch_pos = 0
+        switch_pos = -1
         for i in range(len(switches)):
+            #Only consider available switches
             if switches[i] != 0:
                 p = self.teams[self.party][i]
                 p.pokemonspecies = self.handler.client.species_list[p.species]
                 mult = 1
+                #Create a numerical representation of how good/bad the switch would be against the opponent
+                #Finds best Pokemon defensively (based on defenses against current opponent)
                 for type1 in p.pokemonspecies["types"]:
                     for type2 in them_types:
                         mult *= self.effectiveness[self.types[type2]][self.types[type1]]
                 if mult < best_mult:
                     best_mult = mult
                     switch_pos = i
+                    
         return switch_pos
     
     ############################################################################
@@ -327,22 +315,23 @@ class Battle:
     ############################################################################
     #    perform_result                                                        #
     #    by Allan Simmons                                                      #
-    #    Last modified: 9/11/12                                                #
+    #    Last modified: 9/14/12                                                #
     #                                                                          #
     #        This function will perform the result as determined by the        #
     #    expert system. The first word of the result determines whether        #
     #    a move is used or a switch is made.                                   #
     ############################################################################
     def perform_result(self, result, me, switches):
-        #IF KEYWORD IS MOVE OR SWITCH
+        #IF KEYWORD IS MOVE OR SWITCH   
         if result[1] == "(Use":
             attack = int(result[2])
             move_pos = 0
             #FIND ATTACK IN LIST OF ATTACKS
             for i, move in enumerate(me.moves):
                 move = self.handler.client.move_list[move[0]]
-                if attack is move["id"]:
+                if attack == move["id"]:
                     move_pos = i
+            print "Used move ", attack
             self.send_move(move_pos, 1 - self.party)
             
         elif result [1] == "(Switch-to":
@@ -355,6 +344,7 @@ class Battle:
                     p.pokemonspecies = self.handler.client.species_list[p.species]
                     if pokemon == p.species:
                         switch_pos = i
+            print "Switched to ", switch_pos
             self.send_switch(switch_pos)
     
     ############################################################################
@@ -365,23 +355,20 @@ class Battle:
     #        This function loads the rules into the expert system.             #
     ############################################################################
     def load_rules(self):
-        esys.BuildRule("Replace", "(Need to replace fainted Pokemon)", "(assert (Need to switch))", "")
-        esys.BuildRule("Switch", "(Need to switch) (Best-switch-is ?pokemon)", "(assert (Switch-to ?pokemon Pokemon))", "")
         esys.BuildRule("Fight", "(not (Need to switch)) (Best-move-is ?move)", "(assert (Use ?move move))", "")
+        esys.BuildRule("Switch", "(Need to switch) (Best-switch-is ?pokemon)", "(assert (Switch-to ?pokemon Pokemon))", "")
+        esys.BuildRule("Replace", "(Need to replace fainted Pokemon)", "(assert (Need to switch))", "")
     
     ############################################################################
     #    request_action                                                        #
     #    by Allan Simmons                                                      #
-    #    Last modified: 9/3/12                                                 #
+    #    Last modified: 9/14/12                                                #
     #                                                                          #
     #        This function gathers information about the current Pokemon,      #
     #    the other team members, and the opposing Pokemon. This information    #
     #    is then stored as facts for PyClips to use along with rules set       #
     #    by the author. When run, PyClips will use both the facts and the      #
     #    rules to determine a course of action for the bot to take.            #
-    #                                                                          #
-    #        For simplicities sake, moves with type 'Other' will be ignored,   #
-    #    and battlefield conditions will not be taken into account.            #
     ############################################################################
     def request_action(self, slot, pos, replace, switches, can_switch, forced, legal_moves):
         #Reset the facts for the PyClips environment
@@ -402,78 +389,40 @@ class Battle:
                 esys.Assert(replace_fact)
             
             #Active 'Mon's health
-            #    Note: Health is 1 until damage is taken
+            #    Note: Health is not updated until damage is taken
             HP = self.teams[self.party][slot].health[0]
             HP_fact = "(Health is {0})".format(HP)
-            esys.Assert(HP_fact)
+            esys.Assert(HP_fact)            
             
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            #Active 'Mon's moves
-            for i, move in enumerate(me.moves):
-                move = self.handler.client.move_list[move[0]]
-                move_fact = "(Move is {0})".format(move["id"])
-                type_fact = "(Move-Type-for {0} is {1})".format(move["id"], move["type"])
-                power_fact = "(Move-Power-for {0} is {1})".format(move["id"], move["power"])
-                class_fact = "(Move-Class-for {0} is {1})".format(move["id"], move["class"])
-                esys.Assert(move_fact)
-                esys.Assert(type_fact)
-                esys.Assert(power_fact)
-                esys.Assert(class_fact)
-
-
-            #Active 'Mon's Type
-            #pokemon_fact = "(Pokemon is {0})".format(me.get_species())    Not sure if needed - if so, change pokemonType_fact
-            #esys.Assert(pokemon_fact)
-            for type1 in me.pokemonspecies["types"]:
-                pokemonType_fact = "(Current-Pokemon is-type {0})".format(type1)
-                esys.Assert(pokemonType_fact)
-            
-            #Opponent's Type
-            for type2 in them.pokemonspecies["types"]:
-                oppPokemonType_fact = "(Opponent-Pokemon is-type {0})".format(type2)
-                esys.Assert(oppPokemonType_fact)
-            
-            
-            #Ally information
-            for i in range(len(switches)):
-                if switches[i] != 0:
-                    p = self.teams[self.party][i]
-                    p.pokemonspecies = self.handler.client.species_list[p.species]
-                    for type3 in p.pokemonspecies["types"]:
-                        allyType_fact = "(Ally-Pokemon {0} is-type {1})".format(p.species, type3)
-                        esys.Assert(allyType_fact)
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            #Best move
-            best_move_id = self.find_best_move(me, them.pokemonspecies["types"])
-            best_move_fact = "(Best-move-is {0})".format(best_move_id)
-            esys.Assert(best_move_fact)
+            #Move facts, only if there are legal moves
+            if len(legal_moves) > 0:
+                #Best move
+                best_move_id = self.find_best_move(me, them.pokemonspecies["types"], legal_moves)
+                best_move_fact = "(Best-move-is {0})".format(best_move_id)
+                esys.Assert(best_move_fact)
+                
+                #Active 'Mon's "Other" class moves
+                for i, move in enumerate(me.moves):
+                    if legal_moves[i] !=0:
+                        move = self.handler.client.move_list[move[0]]
+                        if move["class"] == "Other":
+                            move_fact = "(Move is {0})".format(move["id"])
+                            esys.Assert(move_fact)
             
             #Best switch
             best_switch_pos = self.find_best_switch(switches, them.pokemonspecies["types"])
-            best_switch_pokemon = self.teams[self.party][best_switch_pos].species
-            best_switch_fact = "(Best-switch-is {0})".format(best_switch_pokemon)
-            esys.Assert(best_switch_fact)
+            if best_switch_pos != -1:
+                best_switch_pokemon = self.teams[self.party][best_switch_pos].species
+                best_switch_fact = "(Best-switch-is {0})".format(best_switch_pokemon)
+                esys.Assert(best_switch_fact)
+            else:
+                best_switch_fact = "(No-best-switches)"
+                esys.Assert(best_switch_fact)
             
             #Once all of the facts have been collected, proceed with the running of the expert system.
-            esys.PrintFacts()
+            esys.PrintAgenda()
             esys.Run()
+            esys.PrintFacts()
 
             #After the expert system has run, find the solution it has come up with and execute it.
             self.perform_result(self.access_result(), me, switches)

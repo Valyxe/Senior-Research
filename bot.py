@@ -325,6 +325,7 @@ class BotClient:
             #         int32 : total number of moves
             #         for each move:
             #             byte: whether the move is legal
+            print "FIGHT"
             fid, slot, pos, replace = msg.read_int(), msg.read_byte(), msg.read_byte(), msg.read_byte()
             request_sequences = msg.read_byte()
             sequential_requests = msg.read_byte()
