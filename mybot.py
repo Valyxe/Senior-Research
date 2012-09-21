@@ -239,7 +239,7 @@ class Battle:
     ############################################################################
     #    find_best_move                                                        #
     #    by Allan Simmons                                                      #
-    #    Last modified: 9/14/12                                                #
+    #    Last modified: 9/21/12                                                #
     #                                                                          #
     #        This function determines the best move of all the moves           #
     #    the current Pokemon has.                                              #
@@ -248,12 +248,15 @@ class Battle:
         best_damage = 0
         best_id = 0
         
-        #Handle moves with multiple hits, Technician
+        #Calculate for each move
         for i, move in enumerate(me.moves):
             move = self.handler.client.move_list[move[0]]
             #Only consider available moves
             if legal_moves[i] != 0:
                 damage = move["power"]
+                #Technician multiplies the power by 1.5 if it is 60 or less
+                if move["power"] <= 60 and (me.get_ability() == "Technician"):
+                    damage *= 1.5
                 #Power is multiplied by 1.5 for STAB (Same Type Attack Bonus)
                 for type1 in me.pokemonspecies["types"]:
                     if move["type"] == type1:
@@ -261,7 +264,13 @@ class Battle:
                 #Power is multiplied by multiple based on type of the move and type(s) of the opponent
                 for type2 in them_types:
                     damage *= self.effectiveness[self.types[move["type"]]][self.types[type2]]
-
+                #For multi-hit moves, calculate based on average number of hits, 3
+                if move["id"] == 14 or move["id"] == 24 or move["id"] == 38 or move["id"] == 50 or move["id"] == 96 or move["id"] == 150 or move["id"] == 152 or move["id"] == 198 or move["id"] == 280 or move["id"] == 321 or move["id"] == 380 or move["id"] == 435:
+                    damage *= 3
+                #These are multi-hit moves that hit exactly twice
+                if move["id"] == 39 or move["id"] == 92 or move["id"] == 437:
+                    damage *= 2
+                    
                 if damage > best_damage:
                     best_damage = damage
                     best_id = move["id"]         
@@ -350,19 +359,26 @@ class Battle:
     ############################################################################
     #    request_action                                                        #
     #    by Allan Simmons                                                      #
-    #    Last modified: 9/11/12                                                #
+    #    Last modified: 9/21/12                                                #
     #                                                                          #
     #        This function loads the rules into the expert system.             #
     ############################################################################
     def load_rules(self):
-        esys.BuildRule("Fight", "(not (Need to switch)) (Best-move-is ?move)", "(assert (Use ?move move))", "")
-        esys.BuildRule("Switch", "(Need to switch) (Best-switch-is ?pokemon)", "(assert (Switch-to ?pokemon Pokemon))", "")
-        esys.BuildRule("Replace", "(Need to replace fainted Pokemon)", "(assert (Need to switch))", "")
+        esys.BuildRule("Replace", "(Need to replace Pokemon)", "(assert (Need to switch))", "")
+        esys.BuildRule("Switch-to-best", "(Need to switch) (Best-switch-is ?pokemon)", "(assert (Switch-to ?pokemon Pokemon))", "")
+        esys.BuildRule("Switch", "(not (Need to replace Pokemon)) (Want to switch)", "(assert (Need to switch))", "")
+        esys.BuildRule("Heal", "(not (Need to switch)) (Need to heal) (Heal-move-is ?move)", "(assert (Use ?move move))", "")
+        esys.BuildRule("Use-other", "(not (Need to switch)) (not (Need to heal)) (Can use Other)", "(assert (Use Other move))", "")
+        esys.BuildRule("Hazards", "(declare (salience 4)) (not (Hazards used)) (not (Other used)) (Use Other move) (Hazard-move-is ?move)", "(assert (Use ?move move) (Other used))", "")
+        esys.BuildRule("Weather", "(declare (salience 3)) (not (Weather used)) (not (Other used)) (Use Other move) (Weather-move-is ?move)", "(assert (Use ?move move) (Other used))", "")
+        esys.BuildRule("Substitute", "(declare (salience 2)) (not (Substitute used)) (not (Other used)) (Use Other move) (Substitute-move-is ?move)", "(assert (Use ?move move) (Other used))", "")
+        esys.BuildRule("Stat-boost", "(declare (salience 1)) (not (Stat-boost used)) (not (Other used)) (Use Other move) (Stat-boost-move-is ?move)", "(assert (Use ?move move) (Other used))", "")
+        esys.BuildRule("Fight", "(not (Need to switch)) (not (Need to heal)) (Best-move-is ?move)", "(assert (Use ?move move))", "")
     
     ############################################################################
     #    request_action                                                        #
     #    by Allan Simmons                                                      #
-    #    Last modified: 9/14/12                                                #
+    #    Last modified: 9/21/12                                                #
     #                                                                          #
     #        This function gathers information about the current Pokemon,      #
     #    the other team members, and the opposing Pokemon. This information    #
@@ -371,10 +387,11 @@ class Battle:
     #    rules to determine a course of action for the bot to take.            #
     ############################################################################
     def request_action(self, slot, pos, replace, switches, can_switch, forced, legal_moves):
-        #Reset the facts for the PyClips environment
+        #Reset the facts and rules for the PyClips environment, then load in the rules
         esys.Reset()
         self.load_rules()
         
+        #These represent the two active Pokemon
         me = self.get_active(True)
         them = self.get_active(False)
         
@@ -384,8 +401,9 @@ class Battle:
         else:
             #Start by getting the facts and adding them to the fact base            
             #If the current Pokemon is fainted, need to replace
+            print replace
             if replace:
-                replace_fact = "(Need to replace fainted Pokemon)"
+                replace_fact = "(Need to replace Pokemon)"
                 esys.Assert(replace_fact)
             
             #Active 'Mon's health
@@ -393,6 +411,12 @@ class Battle:
             HP = self.teams[self.party][slot].health[0]
             HP_fact = "(Health is {0})".format(HP)
             esys.Assert(HP_fact)            
+            
+            ##################################################
+            #FIGURE OUT IF NEED TO HEAL OR SWITCH
+            #FIGURE OUT IF POKEMON IS THREATHENED BY OPPONENT
+            ##################################################
+            
             
             #Move facts, only if there are legal moves
             if len(legal_moves) > 0:
@@ -406,6 +430,19 @@ class Battle:
                     if legal_moves[i] !=0:
                         move = self.handler.client.move_list[move[0]]
                         if move["class"] == "Other":
+                            #Hazard
+                            if move["id"] == 381 or move["id"] == 430 or move["id"] == 386:
+                                move_fact = "(Hazard-move-is {0})".format(move["id"])
+                            #Weather
+                            elif move["id"] == 307 or move["id"] == 398 or move["id"] == 169 or move["id"] == 337:
+                                move_fact = "(Weather-move-is {0})".format(move["id"])
+                            #Substitute
+                            elif move["id"] == 396:
+                                move_fact = "(Substitute-move-is {0})".format(move["id"])
+                            #Stat-boost
+                            elif move["id"] == 2 or move["id"] == 3 or move["id"] == 9 or move["id"] == 25 or move["id"] == 51 or move["id"] == 67 or move["id"] == 81 or move["id"] == 82 or move["id"] == 143 or move["id"] == 171 or move["id"] == 186 or move["id"] == 202 or move["id"] == 234 or move["id"] == 262 or move["id"] == 323 or move["id"] == 351 or move["id"] == 409 or move["id"] == 411 or move["id"] == 413 or move["id"] == 458:
+                                move_fact = "(Stat-boost-move-is {0})".format(move["id"])
+                                
                             move_fact = "(Move is {0})".format(move["id"])
                             esys.Assert(move_fact)
             
@@ -422,6 +459,7 @@ class Battle:
             #Once all of the facts have been collected, proceed with the running of the expert system.
             esys.PrintAgenda()
             esys.Run()
+            esys.PrintRules()
             esys.PrintFacts()
 
             #After the expert system has run, find the solution it has come up with and execute it.
