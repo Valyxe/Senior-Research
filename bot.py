@@ -108,6 +108,9 @@ class OutMessage:
 ################################################################################
 
 class BotClient:
+    
+    
+    
     def __init__(self, host, port):
         self.socket = socket.socket()
         self.socket.connect((host, port))
@@ -123,6 +126,12 @@ class BotClient:
         thread = threading.Thread(target=BotClient.activity_proxy, args=(self,))
         thread.daemon = True
         thread.start()
+        
+        # These are variables for testing by Allan Simmons
+        self.canBattle = 0
+        self.isInBattle = 0
+        self.totalBattles = 0
+        self.options = {'target': 'Halmarut', 'generation': 4, 'n': 1, 'team_length': 6, 'metagame': 1}
 
     def activity_proxy(self):
         while True:
@@ -227,7 +236,18 @@ class BotClient:
                 print "Disconnected from server"
                 break
             # call the handler, if any, for the message
+            print code
             self.handle_message(code, msg)
+            
+            ############################################################################
+            #    by Allan Simmons                                                      #
+            #    Last modified: 10/24/12                                               #
+            #                                                                          #
+            #    For testing. This ensures that the bot only issues one                #
+            #    challenge at a time, and that the bot will not exceed 300 battles.    #
+            ###########################################################################
+            if self.canBattle == 1 and self.isInBattle == 0 and self.totalBattles < 300:
+                self.handler.send_challenge(self.options)
     
     def handle_message(self, code, msg):
         if code == 1:
@@ -325,7 +345,6 @@ class BotClient:
             #         int32 : total number of moves
             #         for each move:
             #             byte: whether the move is legal
-            print "FIGHT"
             fid, slot, pos, replace = msg.read_int(), msg.read_byte(), msg.read_byte(), msg.read_byte()
             request_sequences = msg.read_byte()
             sequential_requests = msg.read_byte()
@@ -476,7 +495,11 @@ class BotClient:
                 else:
                     pool = periods = period_length = -1
                 metagames.append((index, name, id, desc, party_size, max_team_length, bans, clauses, pool, periods, period_length))
+            print metagames
             self.handler.handle_metagame_list(metagames)
+            self.canBattle = 1
+        elif code == 32:
+            print "MESSAGE: ", msg.read_string(), msg.read_byte(), msg.read_byte(), msg.read_byte(), msg.read_byte(), msg.read_byte()
         else:
             pass #print "Unknown code: ", code
 
@@ -496,8 +519,7 @@ def handle_challenge(client, msg):
 ################################################################################
 # A class that handles messages from the server
 # Subclass this to create your own bot
-class MessageHandler:
-    
+class MessageHandler:    
     # Sends a message to a certain channel
     def send_message(self, channel, message):
         msg = OutMessage(4)
@@ -527,7 +549,7 @@ class MessageHandler:
         metagame = options.get('metagame', 0)
         msg.write_int(metagame)
         if metagame != -1:
-            # TODO: actually handle this
+            # actually handle this
             pass
         self.client.send(msg)
             
@@ -548,6 +570,7 @@ class MessageHandler:
     
     # sends a team to the server
     def finalise_challenge(self, user, team):
+        self.client.isInBattle = 1
         msg = OutMessage(8)
         msg.write_string(user)
         self.write_team(msg, team)
